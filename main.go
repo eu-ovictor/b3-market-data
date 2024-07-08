@@ -2,66 +2,175 @@ package main
 
 import (
 	"context"
-	"encoding/csv"
+	"encoding/json"
 	"fmt"
-	"io"
+	"net/http"
 	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
-	"time"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
 )
 
 // TODO: read from env
 const DATABASE_URL = "postgres://root:passwd@localhost:5432/b3-market-data"
-const ASSETS_PATH = "./sample"
-
-const CREATE_TABLE = `
-    CREATE TABLE IF NOT EXISTS trade (
-        id SERIAL PRIMARY KEY,
-        ticker VARCHAR(10) NOT NULL, 
-        gross_amount NUMERIC(10, 3),
-        quantity INT NOT NULL,
-        entry_time TIME WITH TIME ZONE, 
-        date DATE
-    );
+const SELECT = `
+    SELECT 
+      DISTINCT ON (ticker) t1.ticker, 
+      t2.max_range_value, 
+      t1.quantity AS max_daily_volume
+    FROM 
+      trade t1 
+      JOIN (
+        SELECT 
+          ticker, 
+          MAX(gross_amount) AS max_range_value 
+        FROM 
+          trade 
+        GROUP BY 
+          ticker
+      ) t2 ON t1.ticker = t2.ticker 
+    ORDER BY 
+      t1.ticker, 
+      t1.quantity DESC;
+`
+const SELECT_WHERE_TICKER = ` 
+    SELECT 
+      DISTINCT ON (ticker) t1.ticker, 
+      t2.max_range_value, 
+      t1.quantity AS max_daily_volume
+    FROM 
+      trade t1 
+      JOIN (
+        SELECT 
+          ticker, 
+          MAX(gross_amount) AS max_range_value 
+        FROM 
+          trade 
+        WHERE ticker = $1
+        GROUP BY 
+          ticker
+      ) t2 ON t1.ticker = t2.ticker 
+    ORDER BY 
+      t1.ticker, 
+      t1.quantity DESC;
+`
+const SELECT_WHERE_DATE = ` 
+    SELECT DISTINCT ON (ticker)
+        t1.ticker,
+        t2.max_range_value,
+        t1.quantity AS max_daily_volume
+    FROM trade t1
+    JOIN (
+        SELECT ticker, MAX(gross_amount) AS max_range_value
+        FROM trade
+        WHERE date >= $1
+        GROUP BY ticker
+    ) t2 ON t1.ticker = t2.ticker
+    WHERE t1.date >= $1
+    ORDER BY t1.ticker, t1.quantity DESC;
 `
 
-const INSERT_INTO = `
-    INSERT INTO trade (ticker, gross_amount, quantity, entry_time, date)
-    VALUES ($1, $2, $3, $4, $5)
+const SELECT_WHERE_TICKER_DATE = ` 
+    SELECT DISTINCT ON (ticker)
+        t1.ticker,
+        t2.max_range_value,
+        t1.quantity AS max_daily_volume
+    FROM trade t1
+    JOIN (
+        SELECT ticker, MAX(gross_amount) AS max_range_value
+        FROM trade
+        WHERE date >= $2 AND ticker = $1
+        GROUP BY ticker
+    ) t2 ON t1.ticker = t2.ticker
+    WHERE t1.date >= $2
+    ORDER BY t1.ticker, t1.quantity DESC;
 `
 
-type Trade struct {
-	Ticker      string
-	GrossAmount float64
-	Quantity    int64
-	EntryTime   time.Time
-	Date        time.Time
+type TradeSummary struct {
+	Ticker         string  `json:"ticker"`
+	MaxRangeValue  float64 `json:"max_range_value"`
+	MaxDailyVolume int     `json:"max_daily_volume"`
 }
 
-func parseEntryTime(s string) (time.Time, error) {
-	loc, err := time.LoadLocation("America/Sao_Paulo")
-	if err != nil {
-		return time.Time{}, err
+func listTradesHandler(c *fiber.Ctx, conn *pgx.Conn) error {
+	var (
+		rows pgx.Rows
+		err  error
+	)
+
+	date := c.Query("date")
+	if date != "" {
+		rows, err = conn.Query(c.Context(), SELECT_WHERE_DATE, date)
+	} else {
+		rows, err = conn.Query(c.Context(), SELECT)
 	}
 
-	hour, _ := strconv.Atoi(s[0:2])
-	minute, _ := strconv.Atoi(s[2:4])
-	second, _ := strconv.Atoi(s[4:6])
-	nano, _ := strconv.Atoi(s[6:9])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return c.SendStatus(http.StatusInternalServerError)
+	}
+	defer rows.Close()
 
-	entryTime := time.Date(0, 1, 1, hour, minute, second, nano*1000000, loc)
+	var trades []TradeSummary
 
-	return entryTime.UTC(), nil
+	for rows.Next() {
+		var trade TradeSummary
+
+		err := rows.Scan(&trade.Ticker, &trade.MaxRangeValue, &trade.MaxDailyVolume)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return c.SendStatus(http.StatusInternalServerError)
+		}
+
+		trades = append(trades, trade)
+	}
+
+	if rows.Err() != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return c.SendStatus(http.StatusInternalServerError)
+	}
+
+	// TODO: add content negotiation
+	responseBody, err := json.Marshal(trades)
+	if err != nil {
+		return c.SendStatus(http.StatusInternalServerError)
+	}
+
+	c.Set("Content-Type", "application/json")
+
+	return c.Send(responseBody)
 }
 
-func parseGrossAmount(s string) (float64, error) {
-	s = strings.Replace(s, ",", ".", 1)
+func detailTradesHandler(c *fiber.Ctx, conn *pgx.Conn) error {
+	ticker := c.Params("ticker")
 
-	return strconv.ParseFloat(s, 64)
+	var row pgx.Row
+
+	date := c.Query("date")
+
+	if date != "" {
+		row = conn.QueryRow(c.Context(), SELECT_WHERE_TICKER_DATE, ticker, date)
+	} else {
+		row = conn.QueryRow(c.Context(), SELECT_WHERE_TICKER, ticker)
+	}
+
+	var trade TradeSummary
+
+	err := row.Scan(&trade.Ticker, &trade.MaxRangeValue, &trade.MaxDailyVolume)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return c.SendStatus(http.StatusInternalServerError)
+	}
+
+	// TODO: add content negotiation
+	responseBody, err := json.Marshal(trade)
+	if err != nil {
+		return c.SendStatus(http.StatusInternalServerError)
+	}
+
+	c.Set("Content-Type", "application/json")
+
+	return c.Send(responseBody)
 }
 
 func main() {
@@ -72,94 +181,18 @@ func main() {
 	}
 	defer conn.Close(context.Background())
 
-	files, err := os.ReadDir(ASSETS_PATH)
-	if err != nil {
+	app := fiber.New()
+
+	app.Get("/trades", func(c *fiber.Ctx) error {
+		return listTradesHandler(c, conn)
+	})
+
+	app.Get("/trades/:ticker", func(c *fiber.Ctx) error {
+		return detailTradesHandler(c, conn)
+	})
+
+	if err := app.Listen(":8000"); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
-	}
-
-	if _, err := conn.Exec(context.Background(), CREATE_TABLE); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	for _, file := range files {
-		filePath := filepath.Join(ASSETS_PATH, file.Name())
-
-		f, err := os.Open(filePath)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		defer f.Close()
-
-		r := csv.NewReader(f)
-		r.Comma = ';'
-
-		// ignore header
-		_, err = r.Read()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-
-		for {
-			rec, err := r.Read()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
-			}
-
-			grossAmount, err := parseGrossAmount(rec[3])
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
-			}
-
-			quantity, err := strconv.ParseInt(rec[4], 10, 64)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
-			}
-
-			layout := "2006-01-02"
-			date, err := time.Parse(layout, rec[8])
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
-			}
-
-			entryTime, err := parseEntryTime(rec[5])
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
-			}
-
-			trade := Trade{
-				Ticker:      rec[1],
-				GrossAmount: grossAmount,
-				Quantity:    quantity,
-				EntryTime:   entryTime,
-				Date:        date,
-			}
-
-			if _, err := conn.Exec(
-                context.Background(), 
-                INSERT_INTO, 
-                trade.Ticker, 
-                trade.GrossAmount, 
-                trade.Quantity, 
-                trade.EntryTime, 
-                trade.Date,
-            ); err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
-			}
-
-			fmt.Printf("%v\n", trade)
-		}
 	}
 }
