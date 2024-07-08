@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "b3-market-data-scraper"
+version = "0.1.0"
+description = "Simple scraper for B3 market-data."
+authors = ["Victor Gonçalves <victorgoncalveslds@proton.me>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+beautifulsoup4 = "^4.12.3"
+aiohttp = "^3.9.5"
+selenium = "^4.22.0"
+aiofiles = "^24.1.0"
+
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.4.2"
+ipdb = "^0.13.13"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
