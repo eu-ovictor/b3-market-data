@@ -11,25 +11,23 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-
 type api struct {
-    db db.DB
+	db db.DB
 }
-
 
 func (app *api) fetchTradesHandler(c *fiber.Ctx) error {
 	date := c.Query("date")
 
-    trades, err := app.db.FetchTrades(date) 
+	trades, err := app.db.FetchTrades(date)
 
-    if err != nil {
-        fmt.Fprintln(os.Stderr, err)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		return c.SendStatus(http.StatusInternalServerError)
-    }
+	}
 
 	responseBody, err := json.Marshal(trades)
 	if err != nil {
-        fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, err)
 		return c.SendStatus(http.StatusInternalServerError)
 	}
 
@@ -43,11 +41,11 @@ func (app *api) getTradeHandler(c *fiber.Ctx) error {
 
 	date := c.Query("date")
 
-    trade, err := app.db.GetTrade(ticker, date)
-    if err != nil {
-        return c.SendStatus(http.StatusInternalServerError)
+	trade, err := app.db.GetTrade(ticker, date)
+	if err != nil {
+		return c.SendStatus(http.StatusInternalServerError)
 
-    }
+	}
 
 	responseBody, err := json.Marshal(trade)
 	if err != nil {
@@ -60,13 +58,13 @@ func (app *api) getTradeHandler(c *fiber.Ctx) error {
 }
 
 func Serve(db db.DB, p string) error {
-    if !strings.HasPrefix(p, ":") {
-        p = ":" + p 
-    }
+	if !strings.HasPrefix(p, ":") {
+		p = ":" + p
+	}
 
-    app := api{
-        db: db,
-    }
+	app := api{
+		db: db,
+	}
 
 	router := fiber.New()
 
@@ -74,10 +72,9 @@ func Serve(db db.DB, p string) error {
 
 	router.Get("/trades/:ticker", app.getTradeHandler)
 
-    if err := router.Listen(p); err != nil {
-        return err
+	if err := router.Listen(p); err != nil {
+		return err
 	}
 
-    return nil
+	return nil
 }
-

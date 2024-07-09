@@ -86,195 +86,191 @@ func parseGrossAmount(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
 }
 
-
 func processRow(row []string) (Trade, error) {
-    ticker := row[1]
+	ticker := row[1]
 
-    grossAmount, err := parseGrossAmount(row[3])
-    if err != nil {
-        return Trade{}, err
-    }
+	grossAmount, err := parseGrossAmount(row[3])
+	if err != nil {
+		return Trade{}, err
+	}
 
-    quantity, err := strconv.ParseInt(row[4], 10, 64)
-    if err != nil {
-        return Trade{}, err
-    }
+	quantity, err := strconv.ParseInt(row[4], 10, 64)
+	if err != nil {
+		return Trade{}, err
+	}
 
-    entryTime, err := parseEntryTime(row[5])
-    if err != nil {
-        return Trade{}, err
-    }
+	entryTime, err := parseEntryTime(row[5])
+	if err != nil {
+		return Trade{}, err
+	}
 
-    layout := "2006-01-02"
-    date, err := time.Parse(layout, row[8])
-    if err != nil {
-        return Trade{}, err
-    }
+	layout := "2006-01-02"
+	date, err := time.Parse(layout, row[8])
+	if err != nil {
+		return Trade{}, err
+	}
 
-    return Trade{
-        Ticker: ticker,
-        GrossAmount: grossAmount,
-        Quantity: quantity,
-        EntryTime: entryTime,
-        Date: date,
-    }, nil
+	return Trade{
+		Ticker:      ticker,
+		GrossAmount: grossAmount,
+		Quantity:    quantity,
+		EntryTime:   entryTime,
+		Date:        date,
+	}, nil
 }
 
 func processFile(
-    filePath string,
-    s int,
-    pool *pgxpool.Pool, 
-    pbar *progressbar.ProgressBar,
+	filePath string,
+	s int,
+	pool *pgxpool.Pool,
+	pbar *progressbar.ProgressBar,
 ) error {
-    var wg sync.WaitGroup
+	var wg sync.WaitGroup
 
-    zipFile, err := zip.OpenReader(filePath)
-    if err != nil {
-        return err
-    }
-    defer zipFile.Close()
+	zipFile, err := zip.OpenReader(filePath)
+	if err != nil {
+		return err
+	}
+	defer zipFile.Close()
 
+	var tradesFile *zip.File
 
-    var tradesFile *zip.File 
+	for _, f := range zipFile.File {
+		if filepath.Ext(f.Name) == ".txt" {
+			tradesFile = f
+			break
+		}
+	}
 
-    for _, f := range zipFile.File {
-        if filepath.Ext(f.Name) == ".txt" {
-            tradesFile = f 
-            break
-        }
-    }
+	if tradesFile == nil {
+		return nil
+	}
 
-    if tradesFile == nil {
-        return nil 
-    }
+	f, err := tradesFile.Open()
+	if err != nil {
+		return err
+	}
+	defer f.Close()
 
-    f, err := tradesFile.Open()
-    if err != nil {
-        return err
-    }
-    defer f.Close()
+	r := csv.NewReader(f)
+	r.Comma = ';'
 
-    r := csv.NewReader(f)
-    r.Comma = ';'
+	// ignore header
+	_, err = r.Read()
+	if err != nil {
+		return err
+	}
 
-    // ignore header
-    _, err = r.Read()
-    if err != nil {
-        return err
-    }
+	batch := &pgx.Batch{}
 
-    batch := &pgx.Batch{}
+	for {
+		row, err := r.Read()
+		if err == io.EOF {
+			// process remaining rows
+			result := pool.SendBatch(context.Background(), batch)
+			if result == nil {
+				return fmt.Errorf("got empty batch result while processing file %s", filePath)
+			}
+			result.Close()
 
-    for {
-        row, err := r.Read()
-        if err == io.EOF {
-            // process remaining rows
-            result := pool.SendBatch(context.Background(), batch)
-            if result == nil {
-                return fmt.Errorf("got empty batch result while processing file %s", filePath)
-            }
-            result.Close()
+			pbar.Add(batch.Len())
 
-            pbar.Add(batch.Len())
+			break
+		}
+		if err != nil {
+			return err
+		}
 
-            break
-        }
-        if err != nil {
-            return err
-        }
+		trade, err := processRow(row)
+		if err != nil {
+			return err
+		}
 
-        trade, err := processRow(row)
-        if err != nil {
-            return err
-        }
+		batch.Queue(INSERT_INTO, trade.Ticker, trade.GrossAmount, trade.Quantity, trade.EntryTime, trade.Date)
 
-        batch.Queue(INSERT_INTO, trade.Ticker, trade.GrossAmount, trade.Quantity, trade.EntryTime, trade.Date)
+		if batch.Len() == s {
+			wg.Add(1)
 
-        if batch.Len() == s {
-            wg.Add(1)
+			go func(wg *sync.WaitGroup, pool *pgxpool.Pool, batch *pgx.Batch) {
+				defer wg.Done()
+				result := pool.SendBatch(context.Background(), batch)
+				result.Close()
+			}(&wg, pool, batch)
 
-            go func(wg *sync.WaitGroup, pool *pgxpool.Pool, batch *pgx.Batch) {
-                defer wg.Done()
-                result := pool.SendBatch(context.Background(), batch)
-                result.Close()
-            }(&wg, pool, batch)
+			pbar.Add(batch.Len())
+			batch = &pgx.Batch{}
+		}
+	}
 
-            pbar.Add(batch.Len())
-            batch = &pgx.Batch{}
-        }
-    }
+	wg.Wait()
 
-    wg.Wait()
-    
-    return nil
+	return nil
 }
 
 func loadB3MarketData(dir string, u string, s int) error {
-    pbar := progressbar.Default(-1, "rows inserted")
-    defer pbar.Close()
+	pbar := progressbar.Default(-1, "rows inserted")
+	defer pbar.Close()
 
-    pool, err := pgxpool.New(context.Background(), u)
+	pool, err := pgxpool.New(context.Background(), u)
 	if err != nil {
-        return err
+		return err
 	}
 	defer pool.Close()
 
 	files, err := os.ReadDir(dir)
 	if err != nil {
-        return err
+		return err
 	}
 
 	if _, err := pool.Exec(context.Background(), CREATE_TABLE); err != nil {
-        return err
+		return err
 	}
 
 	if _, err := pool.Exec(context.Background(), CREATE_HYPERTABLE); err != nil {
-        return err
+		return err
 	}
 
 	for _, file := range files {
-        filePath := filepath.Join(dir, file.Name())
+		filePath := filepath.Join(dir, file.Name())
 
-        if err := processFile(filePath, s, pool, pbar); err != nil {
-            return err
-        }
+		if err := processFile(filePath, s, pool, pbar); err != nil {
+			return err
+		}
 	}
 
 	if _, err := pool.Exec(context.Background(), CREATE_MATERIALIZED_VIEW); err != nil {
-        return err
+		return err
 
 	}
 
 	if _, err := pool.Exec(context.Background(), CREATE_INDEXES); err != nil {
-        return err
+		return err
 	}
 
-    return nil
+	return nil
 }
 
 var batchSize int
 
-
 var loadCmd = &cobra.Command{
-    Use: "load",
-    Short: "Loads downloaded B3 market data into database.",
-    RunE: func(_ *cobra.Command, _ []string) error {
-        if err := assertDirExists(); err != nil {
+	Use:   "load",
+	Short: "Loads downloaded B3 market data into database.",
+	RunE: func(_ *cobra.Command, _ []string) error {
+		if err := assertDirExists(); err != nil {
 			return err
-        }
+		}
 
-        u, err := loadDatabaseURI()
-        if err != nil {
-            return err 
-        }
+		u, err := loadDatabaseURI()
+		if err != nil {
+			return err
+		}
 
-        return loadB3MarketData(dir, u, batchSize)
-    },
+		return loadB3MarketData(dir, u, batchSize)
+	},
 }
 
 func loadCLI() *cobra.Command {
-    loadCmd = addDataDir(loadCmd)
-    loadCmd.Flags().IntVarP(&batchSize, "batch-size", "b", 1000, "max length of rows inserted at once")
-    return loadCmd
+	loadCmd = addDataDir(loadCmd)
+	loadCmd.Flags().IntVarP(&batchSize, "batch-size", "b", 1000, "max length of rows inserted at once")
+	return loadCmd
 }
-

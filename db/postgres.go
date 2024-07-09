@@ -9,82 +9,78 @@ import (
 )
 
 type PostgreSQL struct {
-	pool                  *pgxpool.Pool
-	uri                   string
-	schema                string
-	sql                   map[string]string
+	pool *pgxpool.Pool
+	uri  string
 }
-
 
 func (p *PostgreSQL) Close() { p.pool.Close() }
 
 func (p *PostgreSQL) FetchTrades(date string) ([]TradeSummary, error) {
-    var (
-        rows pgx.Rows
-        err error 
-    )
+	var (
+		rows pgx.Rows
+		err  error
+	)
 
-    if date != "" {
-        rows, err = p.pool.Query(context.Background(), FETCH_BY_DATE, date)
-    } else {
-        rows, err = p.pool.Query(context.Background(), FETCH_ALL)
-    }
+	if date != "" {
+		rows, err = p.pool.Query(context.Background(), FETCH_BY_DATE, date)
+	} else {
+		rows, err = p.pool.Query(context.Background(), FETCH_ALL)
+	}
 
-    if err != nil {
-        return nil, err 
-    }
+	if err != nil {
+		return nil, err
+	}
 
-    defer rows.Close()
+	defer rows.Close()
 
-    var trades []TradeSummary
+	var trades []TradeSummary
 
 	for rows.Next() {
 		var trade TradeSummary
 
 		err := rows.Scan(&trade.Ticker, &trade.MaxRangeValue, &trade.MaxDailyVolume)
 		if err != nil {
-            if err == pgx.ErrNoRows {
-                return []TradeSummary{}, nil 
-            }
+			if err == pgx.ErrNoRows {
+				return []TradeSummary{}, nil
+			}
 
-            return nil, err
+			return nil, err
 		}
 
 		trades = append(trades, trade)
 	}
 
-    return trades, nil
+	return trades, nil
 }
 
 func (p *PostgreSQL) GetTrade(ticker string, date string) (TradeSummary, error) {
-    var row pgx.Row
+	var row pgx.Row
 
-    if date != "" {
-        row = p.pool.QueryRow(context.Background(), GET_BY_TICKER_AND_DATE, ticker, date)
-    } else {
-        row = p.pool.QueryRow(context.Background(), GET_BY_TICKER, ticker)
-    }
+	if date != "" {
+		row = p.pool.QueryRow(context.Background(), GET_BY_TICKER_AND_DATE, ticker, date)
+	} else {
+		row = p.pool.QueryRow(context.Background(), GET_BY_TICKER, ticker)
+	}
 
 	var trade TradeSummary
 
-    err := row.Scan(&trade.Ticker, &trade.MaxRangeValue, &trade.MaxDailyVolume)
+	err := row.Scan(&trade.Ticker, &trade.MaxRangeValue, &trade.MaxDailyVolume)
 	if err != nil {
-        if err == pgx.ErrNoRows {
-            emptyTrade := TradeSummary{
-                Ticker: ticker,
-                MaxRangeValue: 0,
-                MaxDailyVolume: 0,
-            }
+		if err == pgx.ErrNoRows {
+			emptyTrade := TradeSummary{
+				Ticker:         ticker,
+				MaxRangeValue:  0,
+				MaxDailyVolume: 0,
+			}
 
-            return emptyTrade, nil
-        }
+			return emptyTrade, nil
+		}
 
-        return TradeSummary{}, err
+		return TradeSummary{}, err
 	}
 
-    return trade, nil
+	return trade, nil
 }
-
 
 func NewPostgreSQL(uri string) (PostgreSQL, error) {
 	cfg, err := pgxpool.ParseConfig(uri)
@@ -98,9 +94,8 @@ func NewPostgreSQL(uri string) (PostgreSQL, error) {
 	}
 
 	p := PostgreSQL{
-		pool:                  conn,
-		uri:                   uri,
-		sql:                   make(map[string]string),
+		pool: conn,
+		uri:  uri,
 	}
 
 	if err := p.pool.Ping(context.Background()); err != nil {
