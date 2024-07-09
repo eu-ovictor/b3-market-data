@@ -13,11 +13,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/schollz/progressbar/v3"
 )
 
 // TODO: read from env
-const DATABASE_URL = "postgres://root:passwd@localhost:5432/b3-market-data"
+const DATABASE_URL = "postgres://root:passwd@localhost:5432/b3-market-data?pool_max_conns=20"
 const ASSETS_PATH = "./sample"
 const BATCH_SIZE = 100000
 
@@ -100,7 +101,7 @@ func processRow(row []string) (Trade, error) {
     }, nil
 }
 
-func processFile(wg *sync.WaitGroup, file os.DirEntry, conn *pgx.Conn, pbar *progressbar.ProgressBar){
+func processFile(wg *sync.WaitGroup, file os.DirEntry, pool *pgxpool.Pool, pbar *progressbar.ProgressBar){
     defer wg.Done()
 
     filePath := filepath.Join(ASSETS_PATH, file.Name())
@@ -128,7 +129,7 @@ func processFile(wg *sync.WaitGroup, file os.DirEntry, conn *pgx.Conn, pbar *pro
         row, err := r.Read()
         if err == io.EOF {
             // process remaining rows
-            result := conn.SendBatch(context.Background(), batch)
+            result := pool.SendBatch(context.Background(), batch)
             if result == nil {
                 fmt.Fprintln(os.Stderr, fmt.Errorf("got empty batch result while processing file %s", file.Name()))
                 os.Exit(1)
@@ -153,15 +154,19 @@ func processFile(wg *sync.WaitGroup, file os.DirEntry, conn *pgx.Conn, pbar *pro
         batch.Queue(INSERT_INTO, trade.Ticker, trade.GrossAmount, trade.Quantity, trade.EntryTime, trade.Date)
 
         if batch.Len() == BATCH_SIZE {
-            result := conn.SendBatch(context.Background(), batch)
-            if result == nil {
-                fmt.Fprintln(os.Stderr, fmt.Errorf("got empty batch result while processing file %s", file.Name()))
-                os.Exit(1)
-            }
-            result.Close()
+            wg.Add(1)
+
+            go func(wg *sync.WaitGroup, pool *pgxpool.Pool, batch *pgx.Batch) {
+                defer wg.Done()
+                result := pool.SendBatch(context.Background(), batch)
+                if result == nil {
+                    fmt.Fprintln(os.Stderr, fmt.Errorf("got empty batch result while processing file %s", file.Name()))
+                    os.Exit(1)
+                }
+                result.Close()
+            }(wg, pool, batch)
 
             pbar.Add(batch.Len())
-
             batch = &pgx.Batch{}
         }
     }
@@ -171,12 +176,12 @@ func main() {
     pbar := progressbar.Default(-1, "rows inserted")
     defer pbar.Close()
 
-	conn, err := pgx.Connect(context.Background(), DATABASE_URL)
+    pool, err := pgxpool.New(context.Background(), DATABASE_URL)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	defer conn.Close(context.Background())
+	defer pool.Close()
 
 	files, err := os.ReadDir(ASSETS_PATH)
 	if err != nil {
@@ -184,7 +189,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if _, err := conn.Exec(context.Background(), CREATE_TABLE); err != nil {
+	if _, err := pool.Exec(context.Background(), CREATE_TABLE); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -194,7 +199,7 @@ func main() {
 	for _, file := range files {
         wg.Add(1)
 
-        go processFile(&wg, file, conn, pbar)
+        go processFile(&wg, file, pool, pbar)
 	}
 
     wg.Wait()
