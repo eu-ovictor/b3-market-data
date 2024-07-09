@@ -2,18 +2,39 @@ version: '3.8'
 
 services:
   db:
-    image: postgres:latest
+    image: timescale/timescaledb:latest-pg16
     restart: always
     environment:
       POSTGRES_USER: root
       POSTGRES_PASSWORD: passwd
       POSTGRES_DB: b3-market-data
+      POSTGRES_INITDB_ARGS: "--locale=en_US.UTF-8 --encoding=UTF8"
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - timescale-data:/var/lib/postgresql/data
+
+  loader: 
+    build: .
+    volumes:
+      - ./downloads:/app/downloads
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgres://root:passwd@db:5432/b3-market-data
+    command: ["./b3-market-data", "load", "-b", "500", "-d", "/app/downloads"]
+
+  app:
+    build: .
+    depends_on:
+      - loader
+      - db
+    environment:
+      DATABASE_URL: postgres://root:passwd@db:5432/b3-market-data
+    ports:
+      - "8000:8000"
+    command: ["./b3-market-data", "api", "-p", "8000"]
 
 volumes:
-  pgdata:
+  timescale-data:
     driver: local
-
