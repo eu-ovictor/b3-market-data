@@ -29,7 +29,12 @@ const CREATE_TABLE = `
     );
 `
 const CREATE_HYPERTABLE = `
-    SELECT create_hypertable('trade', 'date');
+    DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'trade' AND table_schema = 'public') THEN
+            SELECT create_hypertable('trade', 'date');
+        END IF;
+    END $$;
 `
 const CREATE_MATERIALIZED_VIEW = `
     CREATE MATERIALIZED VIEW IF NOT EXISTS trade_summary AS
