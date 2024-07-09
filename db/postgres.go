@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -14,6 +15,23 @@ type PostgreSQL struct {
 }
 
 func (p *PostgreSQL) Close() { p.pool.Close() }
+
+func (p *PostgreSQL) InsertMany(trades []Trade) error {
+	batch := &pgx.Batch{}
+
+	for _, trade := range trades {
+		batch.Queue(CREATE_TRADE, trade.Ticker, trade.GrossAmount, trade.Quantity, trade.EntryTime, trade.Date)
+	}
+
+	result := p.pool.SendBatch(context.Background(), batch)
+	defer result.Close()
+
+	if result == nil {
+		return errors.New("got empty result while creating trades")
+	}
+
+	return nil
+}
 
 func (p *PostgreSQL) FetchTrades(date string) ([]TradeSummary, error) {
 	var (
