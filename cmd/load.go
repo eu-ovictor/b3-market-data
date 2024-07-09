@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/csv"
 	"fmt"
@@ -18,9 +19,9 @@ import (
 )
 
 // TODO: read from env
-const DATABASE_URL = "postgres://root:passwd@localhost:5432/b3-market-data?pool_max_conns=20"
-const ASSETS_PATH = "./sample"
-const BATCH_SIZE = 100000
+const DATABASE_URL = "postgres://root:passwd@localhost:5432/b3-market-data?pool_max_conns=100"
+const ASSETS_PATH = "./downloads"
+const BATCH_SIZE = 1000
 
 const CREATE_TABLE = `
     CREATE TABLE IF NOT EXISTS trade (
@@ -31,7 +32,24 @@ const CREATE_TABLE = `
         date DATE
     );
 `
-
+const CREATE_HYPERTABLE = `
+    SELECT create_hypertable('trade', 'date');
+`
+const CREATE_MATERIALIZED_VIEW = `
+    CREATE MATERIALIZED VIEW IF NOT EXISTS trade_summary AS
+    SELECT
+        time_bucket('1 day', date) AS date,
+        ticker,
+        MAX(gross_amount) AS max_range_value,
+        SUM(quantity) AS total_quantity
+    FROM
+        trade
+    GROUP BY
+        date, ticker;
+`
+const CREATE_INDEXES = `
+    CREATE INDEX IF NOT EXISTS idx_trade_summary_ticker_day ON trade_summary (ticker, date);
+`
 const INSERT_INTO = `
     INSERT INTO trade (ticker, gross_amount, quantity, entry_time, date)
     VALUES ($1, $2, $3, $4, $5)
@@ -101,15 +119,38 @@ func processRow(row []string) (Trade, error) {
     }, nil
 }
 
-func processFile(wg *sync.WaitGroup, file os.DirEntry, pool *pgxpool.Pool, pbar *progressbar.ProgressBar){
-    defer wg.Done()
+func processFile(
+    file os.DirEntry, 
+    pool *pgxpool.Pool, 
+    pbar *progressbar.ProgressBar,
+) error {
+    var wg sync.WaitGroup
 
     filePath := filepath.Join(ASSETS_PATH, file.Name())
 
-    f, err := os.Open(filePath)
+    zipFile, err := zip.OpenReader(filePath)
     if err != nil {
-        fmt.Fprintln(os.Stderr, err)
-        os.Exit(1)
+        return err
+    }
+    defer zipFile.Close()
+
+
+    var tradesFile *zip.File 
+
+    for _, f := range zipFile.File {
+        if filepath.Ext(f.Name) == ".txt" {
+            tradesFile = f 
+            break
+        }
+    }
+
+    if tradesFile == nil {
+        return nil 
+    }
+
+    f, err := tradesFile.Open()
+    if err != nil {
+        return err
     }
     defer f.Close()
 
@@ -119,8 +160,7 @@ func processFile(wg *sync.WaitGroup, file os.DirEntry, pool *pgxpool.Pool, pbar 
     // ignore header
     _, err = r.Read()
     if err != nil {
-        fmt.Fprintln(os.Stderr, err)
-        os.Exit(1)
+        return err
     }
 
     batch := &pgx.Batch{}
@@ -131,8 +171,7 @@ func processFile(wg *sync.WaitGroup, file os.DirEntry, pool *pgxpool.Pool, pbar 
             // process remaining rows
             result := pool.SendBatch(context.Background(), batch)
             if result == nil {
-                fmt.Fprintln(os.Stderr, fmt.Errorf("got empty batch result while processing file %s", file.Name()))
-                os.Exit(1)
+                return fmt.Errorf("got empty batch result while processing file %s", file.Name())
             }
             result.Close()
 
@@ -141,14 +180,12 @@ func processFile(wg *sync.WaitGroup, file os.DirEntry, pool *pgxpool.Pool, pbar 
             break
         }
         if err != nil {
-            fmt.Fprintln(os.Stderr, err)
-            os.Exit(1)
+            return err
         }
 
         trade, err := processRow(row)
         if err != nil {
-            fmt.Fprintln(os.Stderr, err)
-            os.Exit(1)
+            return err
         }
 
         batch.Queue(INSERT_INTO, trade.Ticker, trade.GrossAmount, trade.Quantity, trade.EntryTime, trade.Date)
@@ -159,17 +196,17 @@ func processFile(wg *sync.WaitGroup, file os.DirEntry, pool *pgxpool.Pool, pbar 
             go func(wg *sync.WaitGroup, pool *pgxpool.Pool, batch *pgx.Batch) {
                 defer wg.Done()
                 result := pool.SendBatch(context.Background(), batch)
-                if result == nil {
-                    fmt.Fprintln(os.Stderr, fmt.Errorf("got empty batch result while processing file %s", file.Name()))
-                    os.Exit(1)
-                }
                 result.Close()
-            }(wg, pool, batch)
+            }(&wg, pool, batch)
 
             pbar.Add(batch.Len())
             batch = &pgx.Batch{}
         }
     }
+
+    wg.Wait()
+    
+    return nil
 }
 
 func main() {
@@ -194,13 +231,25 @@ func main() {
 		os.Exit(1)
 	}
 
-    var wg sync.WaitGroup
-
-	for _, file := range files {
-        wg.Add(1)
-
-        go processFile(&wg, file, pool, pbar)
+	if _, err := pool.Exec(context.Background(), CREATE_HYPERTABLE); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 
-    wg.Wait()
+	for _, file := range files {
+        if err := processFile(file, pool, pbar); err != nil {
+            fmt.Fprintln(os.Stderr, err)
+            os.Exit(1)
+        }
+	}
+
+	if _, err := pool.Exec(context.Background(), CREATE_MATERIALIZED_VIEW); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	if _, err := pool.Exec(context.Background(), CREATE_INDEXES); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }
