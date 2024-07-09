@@ -1,4 +1,4 @@
-package main
+package cmd
 
 import (
 	"archive/zip"
@@ -16,12 +16,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/schollz/progressbar/v3"
+	"github.com/spf13/cobra"
 )
-
-// TODO: read from env
-const DATABASE_URL = "postgres://root:passwd@localhost:5432/b3-market-data?pool_max_conns=100"
-const ASSETS_PATH = "./downloads"
-const BATCH_SIZE = 1000
 
 const CREATE_TABLE = `
     CREATE TABLE IF NOT EXISTS trade (
@@ -120,13 +116,12 @@ func processRow(row []string) (Trade, error) {
 }
 
 func processFile(
-    file os.DirEntry, 
+    filePath string,
+    s int,
     pool *pgxpool.Pool, 
     pbar *progressbar.ProgressBar,
 ) error {
     var wg sync.WaitGroup
-
-    filePath := filepath.Join(ASSETS_PATH, file.Name())
 
     zipFile, err := zip.OpenReader(filePath)
     if err != nil {
@@ -171,7 +166,7 @@ func processFile(
             // process remaining rows
             result := pool.SendBatch(context.Background(), batch)
             if result == nil {
-                return fmt.Errorf("got empty batch result while processing file %s", file.Name())
+                return fmt.Errorf("got empty batch result while processing file %s", filePath)
             }
             result.Close()
 
@@ -190,7 +185,7 @@ func processFile(
 
         batch.Queue(INSERT_INTO, trade.Ticker, trade.GrossAmount, trade.Quantity, trade.EntryTime, trade.Date)
 
-        if batch.Len() == BATCH_SIZE {
+        if batch.Len() == s {
             wg.Add(1)
 
             go func(wg *sync.WaitGroup, pool *pgxpool.Pool, batch *pgx.Batch) {
@@ -209,47 +204,72 @@ func processFile(
     return nil
 }
 
-func main() {
+func loadB3MarketData(dir string, u string, s int) error {
     pbar := progressbar.Default(-1, "rows inserted")
     defer pbar.Close()
 
-    pool, err := pgxpool.New(context.Background(), DATABASE_URL)
+    pool, err := pgxpool.New(context.Background(), u)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+        return err
 	}
 	defer pool.Close()
 
-	files, err := os.ReadDir(ASSETS_PATH)
+	files, err := os.ReadDir(dir)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+        return err
 	}
 
 	if _, err := pool.Exec(context.Background(), CREATE_TABLE); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+        return err
 	}
 
 	if _, err := pool.Exec(context.Background(), CREATE_HYPERTABLE); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+        return err
 	}
 
 	for _, file := range files {
-        if err := processFile(file, pool, pbar); err != nil {
-            fmt.Fprintln(os.Stderr, err)
-            os.Exit(1)
+        filePath := filepath.Join(dir, file.Name())
+
+        if err := processFile(filePath, s, pool, pbar); err != nil {
+            return err
         }
 	}
 
 	if _, err := pool.Exec(context.Background(), CREATE_MATERIALIZED_VIEW); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+        return err
+
 	}
 
 	if _, err := pool.Exec(context.Background(), CREATE_INDEXES); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+        return err
 	}
+
+    return nil
 }
+
+var batchSize int
+
+
+var loadCmd = &cobra.Command{
+    Use: "load",
+    Short: "Loads downloaded B3 market data into database.",
+    RunE: func(_ *cobra.Command, _ []string) error {
+        if err := assertDirExists(); err != nil {
+			return err
+        }
+
+        u, err := loadDatabaseURI()
+        if err != nil {
+            return err 
+        }
+
+        return loadB3MarketData(dir, u, batchSize)
+    },
+}
+
+func loadCLI() *cobra.Command {
+    loadCmd = addDataDir(loadCmd)
+    loadCmd.Flags().IntVarP(&batchSize, "batch-size", "b", 1000, "max length of rows inserted at once")
+    return loadCmd
+}
+
