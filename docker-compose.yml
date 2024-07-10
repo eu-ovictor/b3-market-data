@@ -15,6 +15,17 @@ services:
     volumes:
       - timescale-data:/var/lib/postgresql/data
 
+  test-db:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_SSL_MODE: disable
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: passwd
+      POSTGRES_DB: b3-market-data-testdb
+      POSTGRES_INITDB_ARGS: "--locale=en_US.UTF-8 --encoding=UTF8"
+    ports:
+      - "5555:5432"
+
   loader: 
     build: .
     volumes:
