@@ -88,7 +88,7 @@ A aplicação contém alguns testes de integração que conectam ao banco de dad
 
 2. Execute os testes:
     ```sh
-    go test ./...
+    TEST_DATABASE_URL=<url do banco> go test ./...
     ```
 
 ## Documentação da API
