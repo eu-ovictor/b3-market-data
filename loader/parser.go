@@ -21,7 +21,7 @@ func parseEntryTime(s string) (time.Time, error) {
 
 	entryTime := time.Date(0, 1, 1, hour, minute, second, nano*1000000, loc)
 
-	return entryTime.UTC(), nil
+	return entryTime, nil
 }
 
 func parseGrossAmount(s string) (float64, error) {
