@@ -1,7 +1,6 @@
 package db
 
 import (
-	"os"
 	"testing"
 	"time"
 
@@ -11,7 +10,7 @@ import (
 const TICKER = "TICK3R"
 const ANOTHER_TICKER = "4N0TH3RTICK3R"
 
-var TEST_DATABASE_URL string = os.Getenv("TEST_DATABASE_URL")
+var TEST_DATABASE_URL string = "postgres://root:passwd@localhost:5555/b3-market-data-testdb"
 
 func TestMaxRangeValue(t *testing.T) {
 	var (
@@ -77,7 +76,7 @@ func TestMaxRangeValue(t *testing.T) {
 func TestMaxDailyVolume(t *testing.T) {
 	var (
 		amount                 float64 = 1
-		expectedMaxDailyVolume int     = 40
+		expectedMaxDailyVolume int64   = 40
 	)
 
 	trades := []Trade{
@@ -299,5 +298,4 @@ func TestFetchByDate(t *testing.T) {
 		assert.Equal(t, summary.MaxRangeValue, expectedTrade.GrossAmount, "expected max range value to be %v, got %v", expectedTrade.GrossAmount, summary.MaxRangeValue)
 		assert.Equal(t, summary.MaxDailyVolume, expectedTrade.Quantity, "expected max daily volume to be %v, got %v", expectedTrade.Quantity, summary.MaxDailyVolume)
 	}
-
 }
