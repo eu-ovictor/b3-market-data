@@ -84,3 +84,11 @@ const CREATE_MATERIALIZED_VIEW = `
 const CREATE_INDEXES = `
     CREATE INDEX IF NOT EXISTS idx_trade_summary_ticker_day ON trade_summary (ticker, date);
 `
+
+const DROP_TABLE = `
+    DROP TABLE trade;
+`
+
+const DROP_MATERIALIZED_VIEW = `
+    DROP MATERIALIZED VIEW trade_summary;
+`

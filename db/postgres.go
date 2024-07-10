@@ -100,6 +100,42 @@ func (p *PostgreSQL) GetTrade(ticker string, date string) (TradeSummary, error) 
 	return trade, nil
 }
 
+func (p *PostgreSQL) CreateTable() error {
+	if _, err := p.pool.Exec(context.Background(), CREATE_TABLE); err != nil {
+		return err
+	}
+
+	if _, err := p.pool.Exec(context.Background(), CREATE_HYPERTABLE); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (p *PostgreSQL) DropTable() error {
+	if _, err := p.pool.Exec(context.Background(), DROP_MATERIALIZED_VIEW); err != nil {
+		return err
+	}
+
+	if _, err := p.pool.Exec(context.Background(), DROP_TABLE); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (p *PostgreSQL) PostLoad() error {
+	if _, err := p.pool.Exec(context.Background(), CREATE_MATERIALIZED_VIEW); err != nil {
+		return err
+	}
+
+	if _, err := p.pool.Exec(context.Background(), CREATE_INDEXES); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func NewPostgreSQL(uri string) (PostgreSQL, error) {
 	cfg, err := pgxpool.ParseConfig(uri)
 	if err != nil {
