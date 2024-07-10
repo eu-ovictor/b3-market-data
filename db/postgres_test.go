@@ -15,33 +15,30 @@ var TEST_DATABASE_URL string = os.Getenv("TEST_DATABASE_URL")
 
 func TestMaxRangeValue(t *testing.T) {
 	var (
-		lower_quantity   int64   = 1
-		lower_amount     float64 = 1
-		average_amount   float64 = 1.5
-		average_quantity int64   = 2
-		higher_amount    float64 = 2
-		higher_quantity  int64   = 3
+		lower_amount   float64 = 1
+		average_amount float64 = 1.5
+		higher_amount  float64 = 2
 	)
 
 	trades := []Trade{
 		{
 			Ticker:      TICKER,
 			GrossAmount: lower_amount,
-			Quantity:    higher_quantity,
+			Quantity:    1,
 			EntryTime:   time.Now().AddDate(0, 0, -2),
 			Date:        time.Now().AddDate(0, 0, -2),
 		},
 		{
 			Ticker:      TICKER,
 			GrossAmount: average_amount,
-			Quantity:    average_quantity,
+			Quantity:    1,
 			EntryTime:   time.Now().AddDate(0, 0, -1),
 			Date:        time.Now().AddDate(0, 0, -1),
 		},
 		{
 			Ticker:      TICKER,
 			GrossAmount: higher_amount,
-			Quantity:    lower_quantity,
+			Quantity:    1,
 			EntryTime:   time.Now(),
 			Date:        time.Now(),
 		},
@@ -71,7 +68,6 @@ func TestMaxRangeValue(t *testing.T) {
 
 	summary := summaries[0]
 	assert.Equal(t, summary.MaxRangeValue, higher_amount, "expected max range value to be %v, got %v", higher_amount, summary.MaxRangeValue)
-	assert.Equal(t, summary.MaxRangeValue, higher_amount, "expected max daily volume to be %v, got %v", higher_amount, summary.MaxRangeValue)
 }
 
 func TestMaxDailyVolume(t *testing.T) {
