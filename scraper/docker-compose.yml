@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  scraper:
+    build: .
+    environment:
+      -DOWNLOADS_DIR: downloads
+      -OFFSET: 7
+    volumes:
+      - ./downloads:/app/downloads
