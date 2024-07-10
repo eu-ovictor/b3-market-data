@@ -18,9 +18,8 @@ func (l loader) processFile(
 	filePath string,
 	batchSize int,
 	pbar *progressbar.ProgressBar,
+	wg *sync.WaitGroup,
 ) error {
-	var wg sync.WaitGroup
-
 	batch := []db.Trade{}
 
 	r, err := newReader(filePath)
@@ -64,15 +63,13 @@ func (l loader) processFile(
 			go func(wg *sync.WaitGroup, db db.DB, batch []db.Trade) {
 				defer wg.Done()
 				l.db.InsertMany(batch)
-			}(&wg, l.db, batch)
+			}(wg, l.db, batch)
 
 			pbar.Add(len(batch))
 
 			batch = []db.Trade{}
 		}
 	}
-
-	wg.Wait()
 
 	return nil
 }
@@ -90,12 +87,34 @@ func Load(dir string, batchSize int, db db.DB) error {
 		return err
 	}
 
+	var wg sync.WaitGroup
+
+	q := make(chan error, len(files))
+
 	for _, file := range files {
 		filePath := filepath.Join(dir, file.Name())
 
-		if err := loader.processFile(filePath, batchSize, pbar); err != nil {
-			return err
+		wg.Add(1)
+
+		go func(filePath string, wg *sync.WaitGroup, q chan<- error) {
+			defer wg.Done()
+
+			err := loader.processFile(filePath, batchSize, pbar, wg)
+
+			q <- err
+		}(filePath, &wg, q)
+	}
+
+	go func(wg *sync.WaitGroup) {
+		wg.Wait()
+		close(q)
+	}(&wg)
+
+	for m := range q {
+		if m != nil {
+			return m
 		}
 	}
+
 	return nil
 }
