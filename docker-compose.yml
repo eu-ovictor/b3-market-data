@@ -36,7 +36,7 @@ services:
       DATABASE_URL: postgres://root:passwd@db:5432/b3-market-data
     command: ["./b3-market-data", "load", "-b", "500", "-d", "/app/downloads"]
 
-  app:
+  api:
     build: .
     depends_on:
       - loader
