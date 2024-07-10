@@ -81,6 +81,15 @@ O repositório contém alguns arquivos de dados previamente baixados. Esses arqu
 ### Testes de Integração
 
 A aplicação contém alguns testes de integração que conectam ao banco de dados. Para executar os testes de integração, use o Docker Compose:
+1. Inicie o banco de dados:
+    ```sh
+    docker-compose up test-db
+    ```
+
+2. Execute os testes:
+    ```sh
+    go test ./...
+    ```
 
 ## Documentação da API
 
@@ -139,9 +148,3 @@ A resposta da API é um JSON contendo os seguintes campos:
 - `ticker`: O identificador do negócio.
 - `max_range_value`: O maior valor ao qual foi negociado naquele período.
 - `max_daily_volume`: A maior soma de quantidades em um mesmo dia para os dias naquele período.
-
-## Possíveis melhorias
-
-- Implementação de content-negotiation para permitir múltiplos formatos de comunicação, como Protobufs, YAML, CSV, entre outros.
-- Melhoria da camada de acesso e configuração do banco de dados.
-- Adição de mais métodos na API.
