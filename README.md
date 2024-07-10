@@ -8,7 +8,7 @@ Este projeto é uma API simples para dados de negócios da B3. A aplicação pos
 
 Esta aplicação utiliza o TimescaleDB para lidar com as séries temporais que são os dados de negócio. Tirando vantagem das hypertables e da view materializada para construir os dados de resumo que são consultados. Para executar o loader e a API, você precisará de um TimescaleDB, que pode ser executado localmente usando o Docker Compose.
 ```sh
-    docker-compose run db
+    docker-compose up db
 ```
 
 ## Requisitos
@@ -65,13 +65,13 @@ Para facilitar a execução, você pode usar o Docker Compose.
 
 3. Execute o loader usando o Docker Compose:
     ```sh
-    docker-compose run loader
+    docker-compose up loader
     ```
     **Disclaimer:** A execução do loader pode demorar um pouco dependendo da quantidade de arquivos a serem carregados, pois os arquivos são grandes.
 
 4. Inicie a API usando o Docker Compose:
     ```sh
-    docker-compose run api
+    docker-compose up api
     ```
 
 ### Dados Previamente Baixados

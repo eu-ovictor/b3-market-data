@@ -5,6 +5,7 @@ services:
     image: timescale/timescaledb:latest-pg16
     restart: always
     environment:
+      POSTGRES_SSL_MODE: disable
       POSTGRES_USER: root
       POSTGRES_PASSWORD: passwd
       POSTGRES_DB: b3-market-data
