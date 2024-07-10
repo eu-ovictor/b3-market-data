@@ -1,6 +1,7 @@
 package db
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 const TICKER = "TICK3R"
 const ANOTHER_TICKER = "4N0TH3RTICK3R"
 
-var TEST_DATABASE_URL string = "postgres://root:passwd@localhost:5555/b3-market-data-testdb"
+var TEST_DATABASE_URL string = os.Getenv("TEST_DATABASE_URL")
 
 func TestMaxRangeValue(t *testing.T) {
 	var (
