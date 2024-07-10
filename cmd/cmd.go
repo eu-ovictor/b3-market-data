@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	defaultDataDir = "data"
+	defaultDataDir = "downloads"
 	help           = `B3 Market data.
 
 Toolbox to manage B3 Market data, including tools to handle load data and spin up the web server.
